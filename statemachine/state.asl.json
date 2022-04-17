@@ -1,0 +1,36 @@
+{
+  "Comment": "Place order SM example",
+  "StartAt": "CheckAvailability",
+  "States": {
+    "CheckAvailability": {
+      "Type": "Task",
+      "Resource": "${CheckAvailabilityArn}",
+      "Next": "ValidateAvailability"
+    },
+    "ValidateAvailability": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.available",
+          "BooleanEquals": true,
+          "Next": "PlaceOrder"
+        },
+        {
+          "Variable": "$.available",
+          "BooleanEquals": false,
+          "Next": "NotifyCustomer"
+        }
+      ]
+    },
+    "PlaceOrder": {
+      "Type": "Task",
+      "Resource": "${PlaceOrderArn}",
+      "Next": "NotifyCustomer"
+    },
+    "NotifyCustomer": {
+      "Type": "Task",
+      "Resource": "${NotifyCustomerArn}",
+      "End": true
+    }
+  }
+}

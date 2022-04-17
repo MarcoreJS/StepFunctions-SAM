@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform: AWS::Serverless-2016-10-31
+
+Parameters:
+  Environment:
+    Type: String
+    Description: Environment that will suffix the aws resources
+
+Globals:
+  Function:
+    Timeout: 5
+
+Resources:
+  Logs:
+    Type: AWS::Logs::LogGroup
+
+  PlaceOrderQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub PlaceOrderQueue-${Environment}
+
+  DdbTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    Properties:
+      TableName: !Sub orders-${Environment}
+      AttributeDefinitions:
+        - AttributeName: customer_id
+          AttributeType: S
+        - AttributeName: order_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: customer_id
+          KeyType: HASH
+        - AttributeName: order_id
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      ProvisionedThroughput:
+        ReadCapacityUnits: 0
+        WriteCapacityUnits: 0
+
+  PlaceOrderStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Name: !Sub place-order-${Environment}
+      DefinitionUri: statemachine/state.asl.json
+      Logging:
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt Logs.Arn
+        IncludeExecutionData: true
+        Level: ALL
+      DefinitionSubstitutions:
+        CheckAvailabilityArn: !GetAtt CheckAvailability.Arn
+        PlaceOrderArn: !GetAtt PlaceOrder.Arn
+        NotifyCustomerArn: !GetAtt NotifyCustomer.Arn
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref CheckAvailability
+        - LambdaInvokePolicy:
+            FunctionName: !Ref PlaceOrder
+        - LambdaInvokePolicy:
+            FunctionName: !Ref NotifyCustomer
+        - CloudWatchLogsFullAccess
+  
+  CheckAvailability:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/CheckAvailability
+      Handler: checkAvailability.handler
+      Runtime: nodejs12.x
+      FunctionName: !Sub PlaceOrder-CheckAvailability-${Environment}
+
+  PlaceOrder:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/PlaceOrder
+      Handler: placeOrder.handler
+      Runtime: nodejs12.x
+      FunctionName: !Sub PlaceOrder-PlaceOrder-${Environment}
+      Environment:
+        Variables:
+          DDB_TABLE: !Ref DdbTable
+      Policies:
+      - Statement:
+        - Sid: DynamoDBPolicy
+          Effect: Allow
+          Action:
+            - dynamodb:PutItem
+          Resource:
+            - !GetAtt DdbTable.Arn
+
+  NotifyCustomer:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/NotifyCustomer
+      Handler: notifyCustomer.handler
+      Runtime: nodejs12.x
+      FunctionName: !Sub PlaceOrder-NotifyCustomer-${Environment}
+      
+  TriggerSM:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/TriggerSM
+      Handler: triggerSM.handler
+      Runtime: nodejs12.x
+      FunctionName: !Sub PlaceOrder-TriggerSM-${Environment}
+      Environment:
+        Variables:
+          SM_ARN: !GetAtt PlaceOrderStateMachine.Arn
+      Policies:
+      - Statement:
+        - Sid: StateMachines
+          Effect: Allow
+          Action:
+            - states:StartExecution
+          Resource:
+            - !GetAtt PlaceOrderStateMachine.Arn
+      Events:
+        SQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt PlaceOrderQueue.Arn
+            BatchSize: 1

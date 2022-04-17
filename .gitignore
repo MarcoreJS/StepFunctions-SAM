@@ -1,0 +1,5 @@
+node_modules
+packaged.yaml
+.aws-sam
+./package.json
+deploy.txt
